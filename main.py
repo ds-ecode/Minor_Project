@@ -29,17 +29,14 @@ def detect_faces(image):
     return faces_rect
 
 # Capture face from webcam
-def capture_face(video_capture):
+def capture_face():
+    WEBCAMNUM = 0
+    video_capture = cv2.VideoCapture(WEBCAMNUM)
     for i in range(3):
         video_capture.read()
-    while True:
-        ret, frame = video_capture.read()
-        FRAME_WINDOW = st.image([])
-        FRAME_WINDOW.image(frame[:, :, ::-1])
-        face_locations = detect_faces(frame)
-        if len(face_locations) > 0:
-            video_capture.release()
-            return frame
+    ret, frame = video_capture.read()
+    video_capture.release()
+    return frame
 
 # Convert uploaded file to image array
 def byte_to_array(image_byte):
@@ -85,17 +82,16 @@ st.markdown("""
 option = st.selectbox("Select file source?", ("Webcam", "Upload Picture"))
 
 if option == "Webcam":
-    WEBCAMNUM = 0
-    video_capture = cv2.VideoCapture(WEBCAMNUM)
-    frame = capture_face(video_capture)
-    if frame is not None:
-        face_locations = detect_faces(frame)
-        for (x, y, w, h) in face_locations:
-            face = frame[y:y+h, x:x+w]
-            predicted_class, emotion, _ = predict(face, model, DEVICE)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(frame, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
-        st.image(frame[:, :, ::-1], caption='Captured Image', use_column_width=True)
+    if st.button('Capture Image'):
+        frame = capture_face()
+        if frame is not None:
+            face_locations = detect_faces(frame)
+            for (x, y, w, h) in face_locations:
+                face = frame[y:y+h, x:x+w]
+                predicted_class, emotion, _ = predict(face, model, DEVICE)
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(frame, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+            st.image(frame[:, :, ::-1], caption='Captured Image', use_column_width=True)
 
 elif option == "Upload Picture":
     image_byte = st.file_uploader(label="Select a picture containing faces:", type=['jpg', 'png'])
