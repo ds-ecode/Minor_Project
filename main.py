@@ -1,79 +1,110 @@
 import streamlit as st
 import cv2
 import numpy as np
-import face_recognition
+import torch
+import timm
+from torch import nn
+from PIL import Image
 
+# FaceModel
+class FaceModel(nn.Module):
+    def __init__(self):
+        super(FaceModel, self).__init__()
+        self.eff_net = timm.create_model('efficientnet_b0', pretrained=True, num_classes=7)
 
+    def forward(self, images, labels=None):
+        logits = self.eff_net(images)
+        if labels is not None:
+            loss = nn.CrossEntropyLoss()(logits, labels)
+            return logits, loss
+        return logits
+
+# Load Haarcascade for face detection
+haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# Helper function to detect faces
+def detect_faces(image):
+    gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces_rect = haar_cascade.detectMultiScale(gray_img, 1.1, 9)
+    return faces_rect
+
+# Capture face from webcam
 def capture_face(video_capture):
-    # got 3 frames to auto adjust webcam light
     for i in range(3):
         video_capture.read()
-    while(True):
+    while True:
         ret, frame = video_capture.read()
         FRAME_WINDOW = st.image([])
         FRAME_WINDOW.image(frame[:, :, ::-1])
-        # face detection
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb_small_frame = small_frame[:, :, ::-1]
-        face_locations = face_recognition.face_locations(rgb_small_frame)
+        face_locations = detect_faces(frame)
         if len(face_locations) > 0:
             video_capture.release()
             return frame
 
+# Convert uploaded file to image array
+def byte_to_array(image_byte):
+    image = Image.open(image_byte)
+    image = np.array(image)
+    return image
 
-def faces (image):
-  img = cv2.imread("download.jpeg") 
-  gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) 
-  haar_cascade = cv2.CascadeClassifier('Haarcascade_frontalface_default.xml') 
-  faces_rect = haar_cascade.detectMultiScale(gray_img, 1.1, 9) 
-  return(faces_rect)
-  '''for (x, y, w, h) in faces_rect: 
-  	cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 2) 
-   O/P - [[  2  35  70  70]
-   [ 60  22  80  80]
-   [123  28  83  83]]'''
+# Prediction function
+def predict(image, model, device):
+    # Preprocess the image
+    image = cv2.resize(image, (224, 224))
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = image.transpose((2, 0, 1))
+    image = torch.tensor(image, dtype=torch.float32)
+    image = image.unsqueeze(0)
 
+    # Move the image to the device
+    image = image.to(device)
 
-# main Code
+    # Make the prediction
+    with torch.no_grad():
+        output = model(image)
 
+    # Get the predicted class
+    predicted_class = output.argmax(dim=1)
+    classes = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+
+    # Return the predicted class
+    return predicted_class.item(), classes[predicted_class.item()], output
+
+# Variables
+DEVICE = "cpu"
+model = FaceModel()
+model.to(DEVICE)
+model.load_state_dict(torch.load("path_to_your_model_weights.pth", map_location=DEVICE))
+
+# Main Streamlit code
 st.markdown("""
     # Facial Emotion Recognition APP
-    > By Divyansh Sharma And Devansh Gupta""")
+    > By Divyansh Sharma And Devansh Gupta
+""")
 
-option = st.selectbox(
-    "Select file source?",
-    ("Webcam", "Upload Picture"))
-if option =="Webcam":
-  #camera
-  WEBCAMNUM = 0
-  video_capture = cv2.VideoCapture(WEBCAMNUM)
-  frame = capture_face(video_capture)
-  FRAME_WINDOW = st.image([])
-  FRAME_WINDOW.image(frame)
-  
-  
-if option =="Upload Picture":
-  # displays a file uploader widget and return to BytesIO
-    image_byte = st.file_uploader(
-        label="Select a picture contains faces:", type=['jpg', 'png']
-    )
-   # detect faces in the loaded image
-    max_faces = 0
-    rois = []  # region of interests (arrays of face areas)
+option = st.selectbox("Select file source?", ("Webcam", "Upload Picture"))
+
+if option == "Webcam":
+    WEBCAMNUM = 0
+    video_capture = cv2.VideoCapture(WEBCAMNUM)
+    frame = capture_face(video_capture)
+    if frame is not None:
+        face_locations = detect_faces(frame)
+        for (x, y, w, h) in face_locations:
+            face = frame[y:y+h, x:x+w]
+            predicted_class, emotion, _ = predict(face, model, DEVICE)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.putText(frame, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+        st.image(frame[:, :, ::-1], caption='Captured Image', use_column_width=True)
+
+elif option == "Upload Picture":
+    image_byte = st.file_uploader(label="Select a picture containing faces:", type=['jpg', 'png'])
     if image_byte is not None:
         image_array = byte_to_array(image_byte)
-        face_locations = face_recognition.face_locations(image_array)
-        for idx, (top, right, bottom, left) in enumerate(face_locations):
-            # save face region of interest to list
-            rois.append(image_array[top:bottom, left:right].copy())
-    bgr_img = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
-    st.image(bgr_img, width=720)
-    max_faces = len(face_locations)
-  
-  
-
-
-
-
-
-
+        face_locations = detect_faces(image_array)
+        for (x, y, w, h) in face_locations:
+            face = image_array[y:y+h, x:x+w]
+            predicted_class, emotion, _ = predict(face, model, DEVICE)
+            cv2.rectangle(image_array, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.putText(image_array, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+        st.image(image_array, caption='Uploaded Image', use_column_width=True)
